@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dolibarr PR - Tag branche cible
 // @namespace    https://github.com/Dolibarr/dolibarr
-// @version      1.2.0
+// @version      1.3.0
 // @description  Affiche un tag (style label GitHub) indiquant la branche cible (base) de chaque Pull Request dans la liste https://github.com/Dolibarr/dolibarr/pulls
 // @author       you
 // @match        https://github.com/Dolibarr/dolibarr/pulls*
@@ -128,10 +128,11 @@
     const { r, g, b } = colorForBranch(baseRef);
     const { h, s, l } = rgbToHsl(r, g, b);
 
+    const query = `is:pr is:open base:${baseRef}`;
     const a = document.createElement('a');
-    a.href = `/${REPO}/tree/${encodeURIComponent(baseRef)}`;
+    a.href = `/${REPO}/pulls?q=${encodeURIComponent(query)}`;
     a.className = 'IssueLabel hx_IssueLabel v-align-middle ghbt-tag';
-    a.title = `Cette PR fusionne vers la branche ${baseRef}`;
+    a.title = `Voir les PR ouvertes vers la branche ${baseRef}`;
     a.style.setProperty('--label-r', r);
     a.style.setProperty('--label-g', g);
     a.style.setProperty('--label-b', b);
