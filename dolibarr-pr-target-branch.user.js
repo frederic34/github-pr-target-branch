@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dolibarr PR - Tag branche cible
 // @namespace    https://github.com/Dolibarr/dolibarr
-// @version      1.1.0
+// @version      1.2.0
 // @description  Affiche un tag (style label GitHub) indiquant la branche cible (base) de chaque Pull Request dans la liste https://github.com/Dolibarr/dolibarr/pulls
 // @author       you
 // @match        https://github.com/Dolibarr/dolibarr/pulls*
@@ -17,7 +17,6 @@
   const REPO = 'Dolibarr/dolibarr';
   const CACHE_PREFIX = `ghbt:${REPO}:`;
   const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-  const PROCESSED_ATTR = 'data-ghbt-done';
 
   const GIT_BRANCH_ICON_PATH =
     'M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z';
@@ -182,8 +181,12 @@
     }
   }
 
+  // PR dont la récupération de la branche cible est en cours, pour ne pas
+  // déclencher plusieurs fetches en parallèle pour le même numéro.
+  const fetchesInFlight = new Set();
+
   async function processRow(row) {
-    row.setAttribute(PROCESSED_ATTR, '1');
+    if (row.querySelector('.ghbt-tag')) return; // déjà taggée, rien à faire
 
     const number = extractPrNumber(row);
     if (!number) return;
@@ -191,19 +194,31 @@
     const titleLink = row.querySelector(`#issue_${number}_link`);
     if (!titleLink) return;
 
+    const cached = getCachedBaseRef(number);
+    if (cached) {
+      placeTag(row, titleLink, createLabelElement(cached));
+      return;
+    }
+
+    if (fetchesInFlight.has(number)) return;
+    fetchesInFlight.add(number);
+
     try {
       const baseRef = await getBaseRef(number);
       if (!baseRef) return;
-
-      const tag = createLabelElement(baseRef);
-      placeTag(row, titleLink, tag);
+      // La ligne a pu être remplacée/re-taguée pendant l'attente du fetch.
+      if (row.querySelector('.ghbt-tag')) return;
+      placeTag(row, titleLink, createLabelElement(baseRef));
     } catch (e) {
-      // Erreur réseau ou limite de l'API GitHub atteinte : on laisse la ligne sans tag.
+      // Erreur réseau ou limite de l'API GitHub atteinte : on laisse la ligne sans tag,
+      // elle sera retentée au prochain scan.
+    } finally {
+      fetchesInFlight.delete(number);
     }
   }
 
   function repositionExistingTags() {
-    document.querySelectorAll(`.js-issue-row[${PROCESSED_ATTR}]`).forEach((row) => {
+    document.querySelectorAll('.js-issue-row').forEach((row) => {
       const tag = row.querySelector('.ghbt-tag');
       const titleLink = row.querySelector('a.js-navigation-open.markdown-title');
       if (!tag || !titleLink) return;
@@ -212,8 +227,7 @@
   }
 
   function processRows() {
-    const rows = document.querySelectorAll(`.js-issue-row:not([${PROCESSED_ATTR}])`);
-    rows.forEach(processRow);
+    document.querySelectorAll('.js-issue-row').forEach(processRow);
     repositionExistingTags();
   }
 
@@ -229,6 +243,13 @@
 
     const observer = new MutationObserver(scheduleScan);
     observer.observe(document.body, { childList: true, subtree: true });
+
+    // GitHub navigue via Turbo (pas de rechargement complet) : ces événements
+    // couvrent les cas que le MutationObserver seul peut manquer (restauration
+    // depuis le cache de page Turbo, retour arrière du navigateur).
+    document.addEventListener('turbo:load', scheduleScan);
+    document.addEventListener('turbo:render', scheduleScan);
+    window.addEventListener('pageshow', scheduleScan);
   }
 
   if (document.readyState === 'loading') {
