@@ -41,8 +41,10 @@ Le token est stocké localement via `GM_setValue` (jamais transmis ailleurs qu'�
 - La branche cible n'est pas présente dans le HTML de la liste des PR, elle est donc récupérée via l'API GitHub, avec mise en cache par numéro de PR dans `localStorage`
 - Le tag est positionné en s'ancrant sur l'élément `details.commit-build-statuses` (l'indicateur de checks CI), présent sur la ligne du titre de chaque PR
 - Un `MutationObserver` détecte les changements du DOM (navigation Turbo, chargement différé des statuts CI) pour traiter les nouvelles lignes et repositionner les tags déjà créés
+- Le `@match` couvre tout le dépôt `Dolibarr/dolibarr` (pas seulement `/pulls`) : GitHub navigue en Ajax (Turbo) sans recharger réellement la page, donc Tampermonkey ne réinjecterait jamais le script si on arrivait sur `/pulls` en cliquant depuis une autre page du dépôt. Le script ne travaille (scan, appels API) que si l'URL courante est bien `/pulls`
+- Pour du diagnostic, passer `DEBUG` à `true` en haut du script affiche des logs préfixés `[ghbt]` dans la console
 
 ## Limitations connues
 
-- Spécifique au dépôt `Dolibarr/dolibarr` (URL du script et nom du dépôt en dur)
+- Spécifique au dépôt `Dolibarr/dolibarr` (nom du dépôt en dur)
 - Sans token, la limite de 60 requêtes/heure peut être atteinte en cas de navigation intensive sur plusieurs pages non mises en cache

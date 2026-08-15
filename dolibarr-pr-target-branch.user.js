@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Dolibarr PR - Tag branche cible
 // @namespace    https://github.com/Dolibarr/dolibarr
-// @version      1.4.0
+// @version      1.5.1
 // @description  Affiche un tag (style label GitHub) indiquant la branche cible (base) de chaque Pull Request dans la liste https://github.com/Dolibarr/dolibarr/pulls
 // @author       you
-// @match        https://github.com/Dolibarr/dolibarr/pulls*
+// @match        https://github.com/Dolibarr/dolibarr*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -17,6 +17,12 @@
   const REPO = 'Dolibarr/dolibarr';
   const CACHE_PREFIX = `ghbt:${REPO}:`;
   const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+  // Passer à true pour du diagnostic (logs préfixés [ghbt] dans la console).
+  const DEBUG = false;
+  function log(...args) {
+    if (DEBUG) console.log('[ghbt]', ...args);
+  }
 
   const GIT_BRANCH_ICON_PATH =
     'M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z';
@@ -74,7 +80,16 @@
     if (token) headers.Authorization = `Bearer ${token}`;
 
     const res = await fetch(`https://api.github.com/repos/${REPO}/pulls/${number}`, { headers });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      log(
+        'getBaseRef: réponse API non-ok pour',
+        number,
+        res.status,
+        'reste:',
+        res.headers.get('x-ratelimit-remaining')
+      );
+      return null;
+    }
 
     const data = await res.json();
     const ref = data && data.base && data.base.ref;
@@ -162,6 +177,14 @@
     return details.closest('span.v-align-middle') || details;
   }
 
+  // Le script s'injecte sur tout le dépôt (voir @match) pour être présent dès
+  // qu'un utilisateur arrive sur /pulls via une navigation Turbo (qui ne
+  // recharge pas vraiment la page, donc Tampermonkey ne réinjecterait rien).
+  // On ne travaille donc que si l'URL courante est bien la liste des PR.
+  function isPullsListPage() {
+    return /^\/Dolibarr\/dolibarr\/pulls\/?$/.test(location.pathname);
+  }
+
   function extractPrNumber(row) {
     const m = /^issue_(\d+)$/.exec(row.id);
     return m ? m[1] : null;
@@ -190,14 +213,21 @@
     if (row.querySelector('.ghbt-tag')) return; // déjà taggée, rien à faire
 
     const number = extractPrNumber(row);
-    if (!number) return;
+    if (!number) {
+      log('processRow: pas de numéro de PR trouvé pour la ligne', row.id);
+      return;
+    }
 
     const titleLink = row.querySelector(`#issue_${number}_link`);
-    if (!titleLink) return;
+    if (!titleLink) {
+      log('processRow: titleLink introuvable pour', number);
+      return;
+    }
 
     const cached = getCachedBaseRef(number);
     if (cached) {
       placeTag(row, titleLink, createLabelElement(cached));
+      log('processRow: tag posé depuis le cache pour', number, cached);
       return;
     }
 
@@ -206,13 +236,18 @@
 
     try {
       const baseRef = await getBaseRef(number);
-      if (!baseRef) return;
+      if (!baseRef) {
+        log('processRow: pas de base ref reçue pour', number, '(rate limit ou erreur ?)');
+        return;
+      }
       // La ligne a pu être remplacée/re-taguée pendant l'attente du fetch.
       if (row.querySelector('.ghbt-tag')) return;
       placeTag(row, titleLink, createLabelElement(baseRef));
+      log('processRow: tag posé depuis l\'API pour', number, baseRef);
     } catch (e) {
       // Erreur réseau ou limite de l'API GitHub atteinte : on laisse la ligne sans tag,
       // elle sera retentée au prochain scan.
+      log('processRow: erreur fetch pour', number, e);
     } finally {
       fetchesInFlight.delete(number);
     }
@@ -227,36 +262,44 @@
     });
   }
 
-  function processRows() {
-    document.querySelectorAll('.js-issue-row').forEach(processRow);
+  function processRows(reason) {
+    if (!isPullsListPage()) return;
+
+    const rows = document.querySelectorAll('.js-issue-row');
+    const untagged = Array.from(rows).filter((r) => !r.querySelector('.ghbt-tag'));
+    log('processRows', { reason, rows: rows.length, untagged: untagged.length });
+    rows.forEach(processRow);
     repositionExistingTags();
   }
 
   let scanTimer = null;
-  function scheduleScan() {
+  function scheduleScan(reason) {
+    log('scheduleScan', reason);
     clearTimeout(scanTimer);
-    scanTimer = setTimeout(processRows, 150);
+    scanTimer = setTimeout(() => processRows(reason), 150);
   }
 
   function init() {
     injectStyle();
-    processRows();
+    processRows('init');
 
     // Observe <html> plutôt que <body> : si Turbo remplace <body> en entier
     // lors d'une navigation, ce remplacement reste visible comme mutation de
     // son parent, alors qu'un observer accroché à l'ancien <body> serait resté
     // sur un nœud détaché sans plus rien voir passer.
-    const observer = new MutationObserver(scheduleScan);
+    const observer = new MutationObserver((mutations) =>
+      scheduleScan(`mutation(${mutations.length})`)
+    );
     observer.observe(document.documentElement, { childList: true, subtree: true });
 
     // GitHub navigue via Turbo (pas de rechargement complet) : ces événements
     // couvrent les cas que le MutationObserver seul peut manquer (pagination
     // via <turbo-frame>, restauration depuis le cache de page Turbo, retour
     // arrière du navigateur).
-    document.addEventListener('turbo:load', scheduleScan);
-    document.addEventListener('turbo:render', scheduleScan);
-    document.addEventListener('turbo:frame-load', scheduleScan);
-    window.addEventListener('pageshow', scheduleScan);
+    ['turbo:load', 'turbo:render', 'turbo:frame-load'].forEach((type) => {
+      document.addEventListener(type, () => scheduleScan(type));
+    });
+    window.addEventListener('pageshow', () => scheduleScan('pageshow'));
   }
 
   if (document.readyState === 'loading') {
