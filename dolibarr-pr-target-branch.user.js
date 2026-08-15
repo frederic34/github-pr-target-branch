@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dolibarr PR - Tag branche cible
 // @namespace    https://github.com/Dolibarr/dolibarr
-// @version      1.3.0
+// @version      1.4.0
 // @description  Affiche un tag (style label GitHub) indiquant la branche cible (base) de chaque Pull Request dans la liste https://github.com/Dolibarr/dolibarr/pulls
 // @author       you
 // @match        https://github.com/Dolibarr/dolibarr/pulls*
@@ -242,14 +242,20 @@
     injectStyle();
     processRows();
 
+    // Observe <html> plutôt que <body> : si Turbo remplace <body> en entier
+    // lors d'une navigation, ce remplacement reste visible comme mutation de
+    // son parent, alors qu'un observer accroché à l'ancien <body> serait resté
+    // sur un nœud détaché sans plus rien voir passer.
     const observer = new MutationObserver(scheduleScan);
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
 
     // GitHub navigue via Turbo (pas de rechargement complet) : ces événements
-    // couvrent les cas que le MutationObserver seul peut manquer (restauration
-    // depuis le cache de page Turbo, retour arrière du navigateur).
+    // couvrent les cas que le MutationObserver seul peut manquer (pagination
+    // via <turbo-frame>, restauration depuis le cache de page Turbo, retour
+    // arrière du navigateur).
     document.addEventListener('turbo:load', scheduleScan);
     document.addEventListener('turbo:render', scheduleScan);
+    document.addEventListener('turbo:frame-load', scheduleScan);
     window.addEventListener('pageshow', scheduleScan);
   }
 
