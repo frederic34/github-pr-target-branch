@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dolibarr PR - Tag branche cible
 // @namespace    https://github.com/Dolibarr/dolibarr
-// @version      1.5.1
+// @version      2.0.0
 // @description  Affiche un tag (style label GitHub) indiquant la branche cible (base) de chaque Pull Request dans la liste https://github.com/Dolibarr/dolibarr/pulls
 // @author       you
 // @match        https://github.com/Dolibarr/dolibarr*
@@ -29,7 +29,10 @@
 
   function injectStyle() {
     const style = document.createElement('style');
-    style.textContent = '.ghbt-tag { margin-left: 4px; }';
+    // Aligné sur les labels natifs de la nouvelle liste (tokens de 20px,
+    // espacés de 4px à droite).
+    style.textContent =
+      '.ghbt-tag { margin-right: 4px; vertical-align: middle; text-decoration: none; }';
     document.head.appendChild(style);
   }
 
@@ -146,7 +149,7 @@
     const query = `is:pr is:open base:${baseRef}`;
     const a = document.createElement('a');
     a.href = `/${REPO}/pulls?q=${encodeURIComponent(query)}`;
-    a.className = 'IssueLabel hx_IssueLabel v-align-middle ghbt-tag';
+    a.className = 'IssueLabel hx_IssueLabel ghbt-tag';
     a.title = `Voir les PR ouvertes vers la branche ${baseRef}`;
     a.style.setProperty('--label-r', r);
     a.style.setProperty('--label-g', g);
@@ -160,48 +163,56 @@
     return a;
   }
 
-  function getOrCreateLabelContainer(titleLink) {
-    const next = titleLink.nextElementSibling;
-    if (next && next.classList.contains('lh-default')) {
-      return next;
-    }
-    const span = document.createElement('span');
-    span.className = 'lh-default d-block d-md-inline';
-    titleLink.after(span);
-    return span;
-  }
-
-  function findChecksStatusAnchor(row) {
-    const details = row.querySelector('details.commit-build-statuses');
-    if (!details) return null;
-    return details.closest('span.v-align-middle') || details;
-  }
+  // Depuis 2026, la page /pulls est une application React (« repoPullsDashboard ») :
+  // plus de .js-issue-row, de #issue_<n>_link ni de details.commit-build-statuses.
+  // On s'appuie sur les attributs data-* stables de la nouvelle liste :
+  //   - a[data-testid="listitem-title-link"] : lien du titre, href .../pull/<n>
+  //   - [data-listview-item-title-container] : conteneur du titre, dont le
+  //     dernier <span> accueille les labels natifs (« trailing badges »).
+  const TITLE_LINK_SELECTOR = 'a[data-testid="listitem-title-link"]';
 
   // Le script s'injecte sur tout le dépôt (voir @match) pour être présent dès
-  // qu'un utilisateur arrive sur /pulls via une navigation Turbo (qui ne
+  // qu'un utilisateur arrive sur /pulls via une navigation côté client (qui ne
   // recharge pas vraiment la page, donc Tampermonkey ne réinjecterait rien).
-  // On ne travaille donc que si l'URL courante est bien la liste des PR.
+  // On ne travaille donc que sur les pages de liste des PR : /pulls, /pulls/
+  // et les raccourcis de filtre comme /pulls/<utilisateur>. Les pages de PR
+  // individuelles utilisent /pull/<numéro> (singulier), donc pas de risque de
+  // faux positif ici.
   function isPullsListPage() {
-    return /^\/Dolibarr\/dolibarr\/pulls\/?$/.test(location.pathname);
+    return /^\/Dolibarr\/dolibarr\/pulls(\/|$)/.test(location.pathname);
   }
 
-  function extractPrNumber(row) {
-    const m = /^issue_(\d+)$/.exec(row.id);
+  function extractPrNumber(titleLink) {
+    const m = /\/pull\/(\d+)(?:[/?#]|$)/.exec(titleLink.getAttribute('href') || '');
     return m ? m[1] : null;
   }
 
-  function placeTag(row, titleLink, tag) {
-    const checksAnchor = findChecksStatusAnchor(row);
-    if (checksAnchor) {
-      // Placé juste après l'icône de statut des checks CI (coche verte / croix rouge)
-      // sur la ligne du titre. Ne déplace que si nécessaire, pour ne pas déclencher
-      // de mutations DOM en boucle avec le MutationObserver.
-      if (checksAnchor.nextElementSibling !== tag) {
-        checksAnchor.after(tag);
-      }
-    } else if (!tag.isConnected) {
-      const container = getOrCreateLabelContainer(titleLink);
+  function getRows() {
+    const rows = [];
+    document.querySelectorAll(TITLE_LINK_SELECTOR).forEach((titleLink) => {
+      const row = titleLink.closest('li') || titleLink.closest('[data-listview-item-title-container]');
+      if (row) rows.push({ row, titleLink });
+    });
+    return rows;
+  }
+
+  function findTagContainer(titleLink) {
+    const titleContainer = titleLink.closest('[data-listview-item-title-container]');
+    if (!titleContainer) return null;
+    // Le conteneur des labels natifs est le dernier <span> enfant direct du
+    // conteneur de titre ; on y ajoute notre tag en fin, ce qui ne perturbe
+    // pas la réconciliation React (elle ne manipule que ses propres nœuds).
+    const spans = titleContainer.querySelectorAll(':scope > span');
+    return spans.length ? spans[spans.length - 1] : titleContainer;
+  }
+
+  function placeTag(titleLink, tag) {
+    if (tag.isConnected) return;
+    const container = findTagContainer(titleLink);
+    if (container) {
       container.appendChild(tag);
+    } else {
+      titleLink.after(tag);
     }
   }
 
@@ -209,24 +220,18 @@
   // déclencher plusieurs fetches en parallèle pour le même numéro.
   const fetchesInFlight = new Set();
 
-  async function processRow(row) {
+  async function processRow({ row, titleLink }) {
     if (row.querySelector('.ghbt-tag')) return; // déjà taggée, rien à faire
 
-    const number = extractPrNumber(row);
+    const number = extractPrNumber(titleLink);
     if (!number) {
-      log('processRow: pas de numéro de PR trouvé pour la ligne', row.id);
-      return;
-    }
-
-    const titleLink = row.querySelector(`#issue_${number}_link`);
-    if (!titleLink) {
-      log('processRow: titleLink introuvable pour', number);
+      log('processRow: pas de numéro de PR trouvé pour', titleLink.href);
       return;
     }
 
     const cached = getCachedBaseRef(number);
     if (cached) {
-      placeTag(row, titleLink, createLabelElement(cached));
+      placeTag(titleLink, createLabelElement(cached));
       log('processRow: tag posé depuis le cache pour', number, cached);
       return;
     }
@@ -240,9 +245,10 @@
         log('processRow: pas de base ref reçue pour', number, '(rate limit ou erreur ?)');
         return;
       }
-      // La ligne a pu être remplacée/re-taguée pendant l'attente du fetch.
-      if (row.querySelector('.ghbt-tag')) return;
-      placeTag(row, titleLink, createLabelElement(baseRef));
+      // La ligne a pu être remplacée/re-taguée pendant l'attente du fetch
+      // (React recrée volontiers les <li> lors d'un re-render).
+      if (!row.isConnected || row.querySelector('.ghbt-tag')) return;
+      placeTag(titleLink, createLabelElement(baseRef));
       log('processRow: tag posé depuis l\'API pour', number, baseRef);
     } catch (e) {
       // Erreur réseau ou limite de l'API GitHub atteinte : on laisse la ligne sans tag,
@@ -253,23 +259,13 @@
     }
   }
 
-  function repositionExistingTags() {
-    document.querySelectorAll('.js-issue-row').forEach((row) => {
-      const tag = row.querySelector('.ghbt-tag');
-      const titleLink = row.querySelector('a.js-navigation-open.markdown-title');
-      if (!tag || !titleLink) return;
-      placeTag(row, titleLink, tag);
-    });
-  }
-
   function processRows(reason) {
     if (!isPullsListPage()) return;
 
-    const rows = document.querySelectorAll('.js-issue-row');
-    const untagged = Array.from(rows).filter((r) => !r.querySelector('.ghbt-tag'));
+    const rows = getRows();
+    const untagged = rows.filter(({ row }) => !row.querySelector('.ghbt-tag'));
     log('processRows', { reason, rows: rows.length, untagged: untagged.length });
     rows.forEach(processRow);
-    repositionExistingTags();
   }
 
   let scanTimer = null;
@@ -292,13 +288,14 @@
     );
     observer.observe(document.documentElement, { childList: true, subtree: true });
 
-    // GitHub navigue via Turbo (pas de rechargement complet) : ces événements
-    // couvrent les cas que le MutationObserver seul peut manquer (pagination
-    // via <turbo-frame>, restauration depuis le cache de page Turbo, retour
-    // arrière du navigateur).
+    // GitHub navigue sans rechargement complet (Turbo sur les pages classiques,
+    // routeur React sur la liste des PR) : ces événements couvrent les cas que
+    // le MutationObserver seul peut manquer (restauration depuis le cache de
+    // page, retour arrière du navigateur).
     ['turbo:load', 'turbo:render', 'turbo:frame-load'].forEach((type) => {
       document.addEventListener(type, () => scheduleScan(type));
     });
+    window.addEventListener('popstate', () => scheduleScan('popstate'));
     window.addEventListener('pageshow', () => scheduleScan('pageshow'));
   }
 

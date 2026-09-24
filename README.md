@@ -6,15 +6,15 @@ Script [Tampermonkey](https://www.tampermonkey.net/) qui ajoute, sur la page [gi
 
 ## Fonctionnalités
 
-- Ajoute un tag (icône branche + nom) juste après l'indicateur de statut des checks CI (coche verte / croix rouge) sur chaque ligne de PR
+- Ajoute un tag (icône branche + nom) à droite du titre de chaque PR, dans la zone des labels natifs
 - Couleur du tag selon la branche cible :
   - **vert** : `develop`, `main`, `master`
   - **bleu** : motif de version (ex. `22.0`, `23.0`)
   - **gris** : toute autre branche
-- Le tag est cliquable et renvoie vers l'arborescence de la branche cible
+- Le tag est cliquable et renvoie vers la liste des PR ouvertes ciblant cette branche
 - Style natif GitHub (réutilise les classes CSS `IssueLabel` déjà chargées par la page), donc cohérent en thème clair et sombre
-- Fonctionne avec la navigation Turbo de GitHub (pagination, changement de filtre) sans rechargement de page
-- Repositionne automatiquement le tag si l'indicateur de statut CI apparaît après coup (chargement asynchrone)
+- Fonctionne avec la navigation côté client de GitHub (pagination, changement de filtre, retour arrière) sans rechargement de page
+- Compatible avec la nouvelle liste des PR en React déployée par GitHub en 2026 (version 2.0.0 du script)
 
 ## Installation
 
@@ -39,9 +39,9 @@ Le token est stocké localement via `GM_setValue` (jamais transmis ailleurs qu'�
 ## Comment ça marche
 
 - La branche cible n'est pas présente dans le HTML de la liste des PR, elle est donc récupérée via l'API GitHub, avec mise en cache par numéro de PR dans `localStorage`
-- Le tag est positionné en s'ancrant sur l'élément `details.commit-build-statuses` (l'indicateur de checks CI), présent sur la ligne du titre de chaque PR
-- Un `MutationObserver` détecte les changements du DOM (navigation Turbo, chargement différé des statuts CI) pour traiter les nouvelles lignes et repositionner les tags déjà créés
-- Le `@match` couvre tout le dépôt `Dolibarr/dolibarr` (pas seulement `/pulls`) : GitHub navigue en Ajax (Turbo) sans recharger réellement la page, donc Tampermonkey ne réinjecterait jamais le script si on arrivait sur `/pulls` en cliquant depuis une autre page du dépôt. Le script ne travaille (scan, appels API) que si l'URL courante est bien `/pulls`
+- La liste des PR est désormais une application React : chaque ligne est repérée par son lien de titre `a[data-testid="listitem-title-link"]` (dont le `href` donne le numéro de PR), et le tag est ajouté dans le conteneur des labels natifs, à la suite du titre (`[data-listview-item-title-container]`)
+- Un `MutationObserver` détecte les changements du DOM (navigation côté client, re-render React) pour traiter les nouvelles lignes ; les tags survivent aux re-renders car ils sont recréés depuis le cache
+- Le `@match` couvre tout le dépôt `Dolibarr/dolibarr` (pas seulement `/pulls`) : GitHub navigue en Ajax (Turbo) sans recharger réellement la page, donc Tampermonkey ne réinjecterait jamais le script si on arrivait sur `/pulls` en cliquant depuis une autre page du dépôt. Le script ne travaille (scan, appels API) que si l'URL courante est bien une liste de PR (`/pulls`, `/pulls/<utilisateur>`)
 - Pour du diagnostic, passer `DEBUG` à `true` en haut du script affiche des logs préfixés `[ghbt]` dans la console
 
 ## Limitations connues
