@@ -1,7 +1,9 @@
 // ==UserScript==
 // @name         Dolibarr PR - Tag branche cible
 // @namespace    https://github.com/Dolibarr/dolibarr
-// @version      2.0.1
+// @version      2.0.2
+// @updateURL    https://raw.githubusercontent.com/frederic34/github-pr-target-branch/main/dolibarr-pr-target-branch.user.js
+// @downloadURL  https://raw.githubusercontent.com/frederic34/github-pr-target-branch/main/dolibarr-pr-target-branch.user.js
 // @description  Affiche un tag (style label GitHub) indiquant la branche cible (base) de chaque Pull Request dans la liste https://github.com/Dolibarr/dolibarr/pulls
 // @author       you
 // @match        https://github.com/Dolibarr/dolibarr*
