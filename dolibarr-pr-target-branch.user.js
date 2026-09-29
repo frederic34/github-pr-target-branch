@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dolibarr PR - Tag branche cible
 // @namespace    https://github.com/Dolibarr/dolibarr
-// @version      2.0.0
+// @version      2.0.1
 // @description  Affiche un tag (style label GitHub) indiquant la branche cible (base) de chaque Pull Request dans la liste https://github.com/Dolibarr/dolibarr/pulls
 // @author       you
 // @match        https://github.com/Dolibarr/dolibarr*
@@ -16,7 +16,7 @@
 
   const REPO = 'Dolibarr/dolibarr';
   const CACHE_PREFIX = `ghbt:${REPO}:`;
-  const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+  const CACHE_TTL_MS = 60 * 60 * 1000; // 1 h : la branche cible d'une PR peut changer (retarget)
 
   // Passer à true pour du diagnostic (logs préfixés [ghbt] dans la console).
   const DEBUG = false;
